@@ -623,6 +623,9 @@ class ContentCreater:
         raw_ocr_short_sentences = self.split_short_sentences(raw_ocr_sentences)
         if raw_ocr_short_sentences == None or len(raw_ocr_short_sentences)<=0:
             return ""
+        for short_obj in raw_ocr_short_sentences:
+            print(short_obj.groupid,short_obj.sentence)
+        
         raw_short_sentences_str = "|".join((str(ss) for ss in raw_ocr_short_sentences))
         
         print("raw_ocr_short_sentences:",raw_short_sentences_str)
