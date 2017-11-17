@@ -10,8 +10,6 @@
 #   5. 所有子句中选择前5个特征作为子句，集成一段话。集成过程中进行连贯性重写（语义重写）。
 #'''
 import sys
-import CutFile_ZH as cutfile
-import gensim_lda
 import mysql_reader as db
 import time
 import util_tool as util
@@ -19,7 +17,7 @@ import jieba
 import collections
 from gensim import corpora, models
 import jieba.posseg as pseg
-from snownlp import SnowNLP
+#from snownlp import SnowNLP
 from sentence_checker import SentenceChecker
 import re
 import jnius_config
@@ -109,7 +107,7 @@ class ContentCreater:
         stop_word_file ="title_stopwords.txt"
         jieba.analyse.set_stop_words(stop_word_file)
         self.stop_words_set = self.get_stop_words_set(stop_word_file)
-        self.checker = SentenceChecker("../wordvec/model/zhwiki","all_brand.txt")
+        self.checker = SentenceChecker("../../wordvec/model/zhwiki","all_brand.txt")
         self.all_brands = db.read_distinct_brand()
         self.brandList = list(set(self.all_brands))
         self.checker.add_user_words(self.brandList)
