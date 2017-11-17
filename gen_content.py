@@ -90,14 +90,34 @@ def kmeans(data,k=2):
 
 
 class Short_Sentence:
-    def __init__(self,groupid_init,sentence_init):
+    def __init__(self,groupid_init,sentence_init,score_init=None):
         self.groupid = groupid_init
         self.sentence = sentence_init
+        if score_init == None:
+            self.score = self.eval_sentence()
         
+        self.score = score_init
+    
+    
     def __str__(self):
         return self.sentence
+    
     def __repr__(self):
         return self.sentence
+    
+    
+    def eval_sentence(self):
+        #TODO EVAL SENTENCE SCORE
+        #a. DL model
+        #b. Dict
+        #c. GENSIM SIMILITY
+        #score = a*x + b*y + c*z ,x=0.3,y=0.4,z=0.3
+        dl_score = checker.score_sentence(self.sentence)
+        dict_score = checker.score_sentence_dict(self.sentence)
+        
+        
+        self.score = 1
+        return self.score
 
 class ContentCreater:
 

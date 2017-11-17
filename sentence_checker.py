@@ -27,6 +27,8 @@ class SentenceChecker:
         jieba.load_userdict(user_dict)
         print("loading word2vec model...")
         self.model = Word2Vec.load(model_path)
+        self.aipNlp = AipNlp(APP_ID, API_KEY, SECRET_KEY)
+
 
     def add_user_words(self,words_list):
         for word in words_list:
@@ -48,10 +50,19 @@ class SentenceChecker:
         line = multi_version.sub(r"\2", line_sentence)
         line = punctuation.sub('', line_sentence)
         return line
-
+    
+    
+    
+    def score_sentence(self,sentence):
+        if len(sentence.strip())<=1:
+            return 100000000
+        
+        result = self.aipNlp.dnnlm(sentence)
+        ppl = result['ppl']
+        return ppl
+        
     def is_good_phase(self,sentence):
-        aipNlp = AipNlp(APP_ID, API_KEY, SECRET_KEY)
-        result = aipNlp.dnnlm(sentence)
+        result = self.aipNlp.dnnlm(sentence)
         ppl = result['ppl']
         
         if ppl < 6000:
@@ -98,10 +109,10 @@ class SentenceChecker:
         else:
             return True
 
-
-    def is_correct_sentence(self,sentence):
-        if sentence == None or len(sentence)<4:
-            return False
+    #RETURN percent of err words like 95%,only return 95
+    def score_sentence_dict(self,sentence):
+        if sentence == None or len(sentence)<1:
+            return 0
             
         #        line = self.remove_punc(sentence).strip()
         line = sentence.strip()
@@ -114,22 +125,27 @@ class SentenceChecker:
             if util.isChinese(ch) and util.isChinese(line[i+1]):
                 words.append(ch+line[i+1])
                 skip_next = True
-            
+    
+        total_count =0
         count = 0
         errword = ""
         for word in words:
+            if len(word.strip())<=0:
+                continue
+            
             result = db.read_dict_word(word)
             
             if result<=1 and word not in errword:
                 count += 1
                 errword = errword + " " + word
-        if len(sentence)>8 and count > 1:
-            print(line+"   #####异常词： "+errword)
-            return False
-        elif count>0:
-            return False
+            total_count +=1
+                
+        if total_count>0:
+            return count*100/total_count
         else:
-            return True
+            return 100
+        
+
 
 if __name__ == '__main__':
     cc = SentenceChecker()
