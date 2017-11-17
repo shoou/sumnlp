@@ -605,7 +605,8 @@ class ContentCreater:
                     raw_ocr_short_sentences.append(short_sentence_obj)
 
         return raw_ocr_short_sentences
-                    
+    
+    #生成摘要内容
     def gen_content(self,skuid,typeid,features,typename,brand_name):
         print("/"*64,datetime.datetime.now())
         combined_content = ""
