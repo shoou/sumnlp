@@ -63,12 +63,13 @@ class SentenceChecker:
         
     def is_good_phase(self,sentence):
         result = self.aipNlp.dnnlm(sentence)
+        print(result)
+
         ppl = result['ppl']
         
         if ppl < 6000:
             return True
         else:
-            print(result)
             print("####"+sentence+" err:",ppl)
         
         return False
@@ -146,6 +147,20 @@ class SentenceChecker:
             return 100
         
 
+    def eval_sentence(self,sentence):
+        #TODO EVAL SENTENCE SCORE
+        #a. DL model
+        #b. Dict
+        #c. GENSIM SIMILITY
+        #score = a*x + b*y + c*z ,x=0.3,y=0.4,z=0.3
+        #分值越大越差
+        dl_score = self.checker.score_sentence(sentence)/6000
+        dict_score = self.checker.score_sentence_dict(sentence)
+        
+        dl_score = math.log(dl_score) if dl_score>0 else 0
+        score = dl_score +  dict_score
+            
+        return score
 
 if __name__ == '__main__':
     cc = SentenceChecker()

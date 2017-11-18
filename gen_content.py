@@ -24,6 +24,7 @@ import jnius_config
 from jnius import autoclass
 import os
 import datetime
+import math
 
 
 #os.environ['CLASSPATH'] = '/Users/lully/Documents/MSE/JingDong/Code/CiLin/bin/cilin/cilin.jar'
@@ -93,9 +94,6 @@ class Short_Sentence:
     def __init__(self,groupid_init,sentence_init,score_init=None):
         self.groupid = groupid_init
         self.sentence = sentence_init
-        if score_init == None:
-            self.score = self.eval_sentence()
-        
         self.score = score_init
     
     
@@ -105,19 +103,7 @@ class Short_Sentence:
     def __repr__(self):
         return self.sentence
     
-    
-    def eval_sentence(self):
-        #TODO EVAL SENTENCE SCORE
-        #a. DL model
-        #b. Dict
-        #c. GENSIM SIMILITY
-        #score = a*x + b*y + c*z ,x=0.3,y=0.4,z=0.3
-        dl_score = checker.score_sentence(self.sentence)
-        dict_score = checker.score_sentence_dict(self.sentence)
-        
-        
-        self.score = 1
-        return self.score
+
 
 class ContentCreater:
 
@@ -624,6 +610,63 @@ class ContentCreater:
 
         return raw_ocr_short_sentences
     
+    #返回候选短句子列表，以dict格式返回，key为groupid，value为list
+    def eval_sentences(self,features,short_sentences):
+        print("short_sentences:",[ s.sentence for s in short_sentences])
+        
+        result_sentences = {}
+        
+        for feature in features:
+            candidate_sents =[]
+            matching_list_obj = [s for s in short_sentences if feature in s.sentence]
+            #TODO cut attributes not need.
+            got_next = False
+            for matching_sentence_obj in matching_list_obj:
+                if got_next:
+                    got_next = False
+                    continue
+                matching_sentence = matching_sentence_obj.sentence
+                if self.checker.check_sentence(matching_sentence)== False:
+                    #                if self.checker.is_correct_sentence(matching_sentence) == False:
+                    continue
+                if self.check_sent_one_feature(matching_sentence,features):
+                    result_sentence_kv = ""
+                    if matching_sentence not in candidate_sents:
+                        result_sentence_kv = matching_sentence
+                    #筛选下一句话
+                    next_sentence_index = short_sentences.index(matching_sentence_obj)+1
+                    if next_sentence_index < len(short_sentences) and matching_sentence[-1] != "。":
+                        next_sent_obj = short_sentences[next_sentence_index]
+                        #下一句话只存在于同一个图片中
+                        if next_sent_obj.groupid == matching_sentence_obj.groupid:
+                            next_sent = next_sent_obj.sentence
+                            #下一句中名词占比低于某一值，说明其
+                            words = pseg.cut(next_sent)
+                            noun_count =0
+                            eng_count = 0
+                            total_count =0
+                            for c,v in words:
+                                total_count+=1
+                                if v =="n" or v == "vn":
+                                    noun_count+=1
+                                if v == "eng":# or v=="m":
+                                    eng_count +=1
+                            noun_percent = noun_count*100/total_count
+                            eng_percent = eng_count*100/total_count
+                            print("======"+matching_sentence+"============"+next_sent+"====",noun_percent,eng_percent)
+                            
+                            if noun_percent<=50 and eng_percent<50 and self.checker.check_sentence(next_sent) and self.check_sent_one_feature(next_sent,features)==False and next_sent not in candidate_sents:
+                                result_sentence_kv +=next_sent
+                                got_next = True
+                    result_kv_obj = Short_Sentence(matching_sentence_obj.groupid,result_sentence_kv)
+                    
+                    candidate_sents.append(result_kv_obj)
+        if len(candidate_sents)>0:
+            result_sentences[feature] = candidate_sents
+        
+        return result_sentences
+
+    
     #生成摘要内容
     def gen_content(self,skuid,typeid,features,typename,brand_name):
         print("/"*64,datetime.datetime.now())
@@ -643,8 +686,21 @@ class ContentCreater:
         raw_ocr_short_sentences = self.split_short_sentences(raw_ocr_sentences)
         if raw_ocr_short_sentences == None or len(raw_ocr_short_sentences)<=0:
             return ""
+        short_list = []
+        short_list.append("sku:"+str(skuid))
+        last_groupid = -1
+        last_sentence = ""
         for short_obj in raw_ocr_short_sentences:
-            print(short_obj.groupid,short_obj.sentence)
+            if last_groupid == short_obj.groupid:
+                last_sentence += short_obj.sentence
+            else:
+                if len(last_sentence)>0:
+                    short_list.append(last_sentence)
+                last_sentence = str(short_obj.groupid)+":"
+                last_groupid = short_obj.groupid
+
+        if len(short_list)>0:
+            util.writeList2File("shorts.txt",short_list,'a')
         
         raw_short_sentences_str = "|".join((str(ss) for ss in raw_ocr_short_sentences))
         

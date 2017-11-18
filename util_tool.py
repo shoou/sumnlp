@@ -12,8 +12,8 @@ def get_file_list(file_name):
     with open(file_name,'r') as file:
         return set([line.strip() for line in file])
 
-def writeList2File(full_file_name,list):
-    thefile = open(full_file_name, 'w',encoding='utf-8')
+def writeList2File(full_file_name,list,mode='w'):
+    thefile = open(full_file_name, mode,encoding='utf-8')
     for item in list:
         thefile.write("%s\n" % item)
     thefile.close()
