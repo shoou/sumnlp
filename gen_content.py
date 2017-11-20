@@ -25,6 +25,7 @@ from jnius import autoclass
 import os
 import datetime
 import math
+from operator import itemgetter, attrgetter, methodcaller
 
 
 #os.environ['CLASSPATH'] = '/Users/lully/Documents/MSE/JingDong/Code/CiLin/bin/cilin/cilin.jar'
@@ -95,15 +96,47 @@ class Short_Sentence:
         self.groupid = groupid_init
         self.sentence = sentence_init
         self.score = score_init
-    
+        self._group_score = 0
     
     def __str__(self):
         return self.sentence
     
     def __repr__(self):
-        return self.sentence
+        return "group id:"+str(self.groupid) + " "+ self.sentence+" score:"+str(self.score)
     
+    
+    @property
+    def group_score(self):
+        return self._group_score
 
+    @group_score.setter
+    def group_score(self,value):
+        self._group_score = value
+
+class Phase:
+    def __init__(self,_groupid,_sentence_list):
+        self.groupid = _groupid
+        self.sentence_list = _sentence_list
+        self.avg_score = sum([s.score for s in self.sentence_list])/len(self.sentence_list)
+
+    def phase_string(self):
+        result_string = ""
+        for ss in self.sentence_list:
+            if len(result_string)>0 and result_string[-1] not in [",",".","，","。","！","！","?","？"]:
+                result_string += "，"
+            result_string += ss.sentence
+        return result_string
+    
+    @property
+    def composite_score(self):
+        return self._composite_score
+    
+    @composite_score.setter
+    def composite_score(self,value):
+        self._composite_score = value
+    
+    def __repr__(self):
+        return "gid:"+str(self.groupid)+",score:"+str(self.avg_score)+ ", composite socre:"+str(self._composite_score) +" phase:"+self.phase_string()
 
 class ContentCreater:
 
@@ -129,7 +162,7 @@ class ContentCreater:
 #        print("sim:",sim)
 #
 
-        self.forbid_words = ['顾客','发票','售后','广告','旗舰店','以上数据','产品参数','仅供参考','理论值','保修','发货','无条件','质保','物流','下单','退货','三包规定','客服','实验室','本店','收货','店铺活动','经销商','免息','分期','订单','活动','好礼','赠送','购机','原装','包装清单','保修卡','说明书','VIP','专享','权益','抢购','购物须知','参数展示','参照官网','测试','赠品','免费获得','专属定制']
+        self.forbid_words = ['顾客','发票','售后','广告','旗舰店','以上数据','产品参数','仅供参考','理论值','保修','发货','无条件','质保','物流','下单','退货','三包规定','客服','实验室','本店','收货','店铺活动','经销商','免息','分期','订单','活动','好礼','赠送','购机','原装','包装清单','保修卡','说明书','VIP','专享','权益','抢购','购物须知','参数展示','参照官网','测试','赠品','免费获得','专属定制','安装步骤','仅适用']
 
 
     def get_stop_words_set(self,file_name):
@@ -318,7 +351,7 @@ class ContentCreater:
     #    print("corpus_list:"+str(corpus_list))
         t_start = time.time()
         
-        lda = models.ldamodel.LdaModel(corpus=corpus_list,id2word=word_dict,num_topics=numTopics,alpha='auto',eta=0.01, minimum_probability=0.001,update_every = 1, chunksize = 100, passes = 1)
+        lda = models.ldamodel.LdaModel(corpus=corpus_list,id2word=word_dict,num_topics=numTopics)
         print('-----LDA模型完成，训练时间为\t%.3f秒-----' %(time.time() - t_start))
         
         print("LdaModel.log_perplexity=%.3f" %lda.log_perplexity(corpus_list))
@@ -578,7 +611,7 @@ class ContentCreater:
                         last_char = result_phase[-1]
                         if last_char in [',','.','。','，']:
                             result_phase = result_phase[:-1]+"。"
-                            raw_ocr_short_sentences[-1].sentence= result_phase
+                            raw_ocr_short_sentences[-1].sentence = result_phase
                     
                     continue
                 
@@ -611,60 +644,182 @@ class ContentCreater:
         return raw_ocr_short_sentences
     
     #返回候选短句子列表，以dict格式返回，key为groupid，value为list
-    def eval_sentences(self,features,short_sentences):
-        print("short_sentences:",[ s.sentence for s in short_sentences])
-        
-        result_sentences = {}
+    #首先调用chekcer打分（句子通顺和错别字等），分值越大越差
+    #如果含有lda特征，则加分
+    #如果含有数字／英文／特殊符号，则不同程度减分
+    #短句打分之后形成短句池
+    #计算整个图片的缩合分值,采用max(sentence_score)+avg(sentence_score)综合的方式,另外可以计算整个段话中各子句之间的相似度，如果相似度较小，说明不是说的一件事情
+    #按照group的分值顺序提取句子，并选择下1句,如果2句以内含有另一个高值短句，则作为下一句一起取得，并标记为已选，在下面选择时不要重复选这句了。
+    #最后选择的句子合并成为文章
+    def extract_phase(self,features,short_sentences):
+#        print("short_sentences:",[ s.sentence for s in short_sentences])
+
+        filtered_sentences = []
+        for s in short_sentences[:]:
+            s.score = self.checker.eval_sentence(s.sentence)
+            print(s.sentence+":::::::::::",s.score)
+            if s.score <20:
+                filtered_sentences.append(s)
+            else:
+                if len(filtered_sentences)>0:
+                    filtered_sentences[-1].sentence = filtered_sentences[-1].sentence[:-1]+"。"
+
+        if len(filtered_sentences)<=0:
+            return None
         
         for feature in features:
-            candidate_sents =[]
-            matching_list_obj = [s for s in short_sentences if feature in s.sentence]
-            #TODO cut attributes not need.
-            got_next = False
+            matching_list_obj = [s for s in filtered_sentences if feature in s.sentence]
             for matching_sentence_obj in matching_list_obj:
-                if got_next:
-                    got_next = False
-                    continue
-                matching_sentence = matching_sentence_obj.sentence
-                if self.checker.check_sentence(matching_sentence)== False:
-                    #                if self.checker.is_correct_sentence(matching_sentence) == False:
-                    continue
-                if self.check_sent_one_feature(matching_sentence,features):
-                    result_sentence_kv = ""
-                    if matching_sentence not in candidate_sents:
-                        result_sentence_kv = matching_sentence
-                    #筛选下一句话
-                    next_sentence_index = short_sentences.index(matching_sentence_obj)+1
-                    if next_sentence_index < len(short_sentences) and matching_sentence[-1] != "。":
-                        next_sent_obj = short_sentences[next_sentence_index]
-                        #下一句话只存在于同一个图片中
-                        if next_sent_obj.groupid == matching_sentence_obj.groupid:
-                            next_sent = next_sent_obj.sentence
-                            #下一句中名词占比低于某一值，说明其
-                            words = pseg.cut(next_sent)
-                            noun_count =0
-                            eng_count = 0
-                            total_count =0
-                            for c,v in words:
-                                total_count+=1
-                                if v =="n" or v == "vn":
-                                    noun_count+=1
-                                if v == "eng":# or v=="m":
-                                    eng_count +=1
-                            noun_percent = noun_count*100/total_count
-                            eng_percent = eng_count*100/total_count
-                            print("======"+matching_sentence+"============"+next_sent+"====",noun_percent,eng_percent)
-                            
-                            if noun_percent<=50 and eng_percent<50 and self.checker.check_sentence(next_sent) and self.check_sent_one_feature(next_sent,features)==False and next_sent not in candidate_sents:
-                                result_sentence_kv +=next_sent
-                                got_next = True
-                    result_kv_obj = Short_Sentence(matching_sentence_obj.groupid,result_sentence_kv)
-                    
-                    candidate_sents.append(result_kv_obj)
-        if len(candidate_sents)>0:
-            result_sentences[feature] = candidate_sents
+                matching_sentence_obj.score  = matching_sentence_obj.score / 2
+                print(matching_sentence_obj.sentence+":::::::::: s score:",matching_sentence_obj.score)
+
+        #begin construct group list
+        group_list = {}
+        last_groupid =  filtered_sentences[0].groupid
         
-        return result_sentences
+        group_list[last_groupid] =[]
+        for idx,s in enumerate( filtered_sentences):
+            if last_groupid == s.groupid:
+                group_list[last_groupid].append(s)
+            else:
+                if (idx+1) < len(filtered_sentences):
+                    last_groupid = filtered_sentences[idx+1].groupid
+                    group_list[last_groupid] = []
+
+        #end construct group list
+    
+
+        phase_list = []
+        print("compute group's score:")
+        for k,short_sentences_list in group_list.items():
+            min_score = 1000000
+            avg_score  = sum([ss.score for ss in short_sentences_list])/len(short_sentences_list)
+            
+            for ss in short_sentences_list:
+                if ss.score < min_score:
+                    min_score = ss.score
+        
+            for ss in short_sentences_list:
+                ss.group_score = ( min_score/2 + avg_score)
+            
+            tmp_ph_list = []
+            for ss in short_sentences_list:
+                tmp_ph_list.append(ss)
+                if ss.sentence[-1] in ["！","。","!"] or short_sentences_list[-1]== ss:
+                    ph = Phase(ss.groupid,tmp_ph_list)
+                    ph.composite_score = self.checker.eval_phase(ph)
+                    
+                    phase_list.append(ph)
+                    tmp_ph_list = []
+                    
+            
+        #按照图片的分值重新排序（由低到高）
+        score_sorted_group = sorted(group_list.items(), key=lambda kv: kv[1][0].group_score)
+        for key, value in score_sorted_group:
+            print ("%s:%s, %s" % (key,value, value[0].group_score))
+
+        #将每个图片中的句子以句号分隔，并构建Phase对象（含多个短句），并计算phase的平均分值，最后选择平均分最低的phase构建文章
+        sorted_phase_list = sorted(phase_list,key=lambda ph:ph.composite_score)
+        for sph in sorted_phase_list:
+            print(sph)
+
+        print("$$$$$$"*3)
+        result_sentences_list = []
+        for feature in features[:]:
+            for s in sorted_phase_list:
+                phase_string =  s.phase_string()
+                if feature in phase_string and phase_string not in result_sentences_list:
+                    result_sentences_list.append(phase_string)
+                    #同一句子中含有多个关键词
+                    for f in features:
+                        if f in phase_string:
+                            features.remove(f)
+                    break
+
+        print(result_sentences_list)
+
+        #重新计算句子的lda主题
+        words = self.lda_features(result_sentences_list,2,3)
+        result_words = []
+        for w in words:
+            if w not in result_words:
+                result_words.append(w)
+
+        new_result = []
+        for feature in result_words[:]:
+            for s in result_sentences_list:
+                phase_string =  s
+                if feature in phase_string and phase_string not in new_result:
+                    new_result.append(phase_string)
+                    #同一句子中含有多个关键词
+                    for f in result_words:
+                        if f in phase_string:
+                            result_words.remove(f)
+                            break
+
+        print("$$$$$$$$$$$$$$$$$$$$$")
+        print(new_result)
+        #phase分词后计算各分句的相似度
+        
+        article = ""
+        for ss in new_result:
+            article += ss
+            if len(article)>90:
+                break
+
+        util.writeList2File("new_article.txt",[article],'a')
+
+        return result_sentences_list
+#
+#        result_sentences = {}
+#
+#        for feature in features:
+#            candidate_sents =[]
+#            matching_list_obj = [s for s in short_sentences if feature in s.sentence]
+#            got_next = False
+#            for matching_sentence_obj in matching_list_obj:
+#                if got_next:
+#                    got_next = False
+#                    continue
+#                matching_sentence = matching_sentence_obj.sentence
+#                if self.checker.check_sentence(matching_sentence)== False:
+#                    continue
+#                if self.check_sent_one_feature(matching_sentence,features):
+#                    result_sentence_kv = ""
+#                    if matching_sentence not in candidate_sents:
+#                        result_sentence_kv = matching_sentence
+#                    #筛选下一句话
+#                    next_sentence_index = short_sentences.index(matching_sentence_obj)+1
+#                    if next_sentence_index < len(short_sentences) and matching_sentence[-1] != "。":
+#                        next_sent_obj = short_sentences[next_sentence_index]
+#                        #下一句话只存在于同一个图片中
+#                        if next_sent_obj.groupid == matching_sentence_obj.groupid:
+#                            next_sent = next_sent_obj.sentence
+#                            #下一句中名词占比低于某一值，说明其
+#                            words = pseg.cut(next_sent)
+#                            noun_count =0
+#                            eng_count = 0
+#                            total_count =0
+#                            for c,v in words:
+#                                total_count+=1
+#                                if v =="n" or v == "vn":
+#                                    noun_count+=1
+#                                if v == "eng":# or v=="m":
+#                                    eng_count +=1
+#                            noun_percent = noun_count*100/total_count
+#                            eng_percent = eng_count*100/total_count
+#                            print("======"+matching_sentence+"============"+next_sent+"====",noun_percent,eng_percent)
+#
+#                            if noun_percent<=50 and eng_percent<50 and self.checker.check_sentence(next_sent) and self.check_sent_one_feature(next_sent,features)==False and next_sent not in candidate_sents:
+#                                result_sentence_kv +=next_sent
+#                                got_next = True
+#                    result_kv_obj = Short_Sentence(matching_sentence_obj.groupid,result_sentence_kv)
+#
+#                    candidate_sents.append(result_kv_obj)
+#        if len(candidate_sents)>0:
+#            result_sentences[feature] = candidate_sents
+#
+#        return result_sentences
 
     
     #生成摘要内容
@@ -686,22 +841,25 @@ class ContentCreater:
         raw_ocr_short_sentences = self.split_short_sentences(raw_ocr_sentences)
         if raw_ocr_short_sentences == None or len(raw_ocr_short_sentences)<=0:
             return ""
-        short_list = []
-        short_list.append("sku:"+str(skuid))
-        last_groupid = -1
-        last_sentence = ""
-        for short_obj in raw_ocr_short_sentences:
-            if last_groupid == short_obj.groupid:
-                last_sentence += short_obj.sentence
-            else:
-                if len(last_sentence)>0:
-                    short_list.append(last_sentence)
-                last_sentence = str(short_obj.groupid)+":"
-                last_groupid = short_obj.groupid
-
-        if len(short_list)>0:
-            util.writeList2File("shorts.txt",short_list,'a')
         
+#        #begin write all short sentences to file
+#        short_list = []
+#        short_list.append("sku:"+str(skuid))
+#        last_groupid = raw_ocr_short_sentences[0].groupid
+#        last_sentence = ""
+#        for short_obj in raw_ocr_short_sentences:
+#            if last_groupid == short_obj.groupid:
+#                last_sentence += short_obj.sentence
+#            else:
+#                if len(last_sentence)>0:
+#                    short_list.append(last_sentence)
+#                last_sentence = str(short_obj.groupid)+":"
+#                last_groupid = short_obj.groupid
+#
+#        if len(short_list)>0:
+#            util.writeList2File("shorts.txt",short_list,'a')
+#        #end write all short sentences to file
+
         raw_short_sentences_str = "|".join((str(ss) for ss in raw_ocr_short_sentences))
         
         print("raw_ocr_short_sentences:",raw_short_sentences_str)
@@ -723,12 +881,16 @@ class ContentCreater:
         
         final_features = self.combine_ocr_comment_features(type_features,title_features, ocr_features,comment_features)
         
+        phase_list = self.extract_phase(final_features,raw_ocr_short_sentences)
+        
+        
         #取ocr中句子
         feature_sentences_dict = self.extract_sentences_with_feature(final_features,raw_ocr_short_sentences)
         
         print("feature_sentences_dict:")
         for k,v in feature_sentences_dict.items():
             print(k,v)
+        
         #特征词进行相似性聚类
         cluster_features = self.cluster_feature(feature_sentences_dict.keys(),5)
         #按照主题概率进行组内排序

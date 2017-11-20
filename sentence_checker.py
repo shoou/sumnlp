@@ -10,6 +10,7 @@ import util_tool as util
 import re
 import mysql_reader as db
 from aip import AipNlp
+import math
 
 """ 你的 APPID AK SK """
 APP_ID = '10354266'
@@ -119,6 +120,7 @@ class SentenceChecker:
         line = sentence.strip()
         words = []
         skip_next = False
+        wrong_words_count = 0
         for i,ch in  enumerate(line):
             if skip_next:
                 skip_next = False
@@ -126,7 +128,10 @@ class SentenceChecker:
             if util.isChinese(ch) and util.isChinese(line[i+1]):
                 words.append(ch+line[i+1])
                 skip_next = True
-    
+        #如果有*等特殊符号，则认为存在识别错误，对本句进行惩罚
+        if "*" in line:
+            wrong_words_count = 50
+
         total_count =0
         count = 0
         errword = ""
@@ -139,10 +144,12 @@ class SentenceChecker:
             if result<=1 and word not in errword:
                 count += 1
                 errword = errword + " " + word
+                print("@@@@@@@@@@@@@",errword)
             total_count +=1
                 
         if total_count>0:
-            return count*100/total_count
+            result_socre = (count*10)*100/total_count + wrong_words_count
+            return result_socre
         else:
             return 100
         
@@ -154,12 +161,37 @@ class SentenceChecker:
         #c. GENSIM SIMILITY
         #score = a*x + b*y + c*z ,x=0.3,y=0.4,z=0.3
         #分值越大越差
-        dl_score = self.checker.score_sentence(sentence)/6000
-        dict_score = self.checker.score_sentence_dict(sentence)
+        dl_score = self.score_sentence(sentence)
+        print("dl score:",dl_score)
+#        dl_score = math.log(dl_score) if dl_score>0 else 0
+        dl_score = (dl_score/1000)**2
+
+        print("log dl score:",dl_score)
+
+        dict_score = self.score_sentence_dict(sentence)
+        print("dict score:",dict_score)
+
+        score = dl_score + dict_score
+        return score
+
+    def eval_phase(self,phase):
+        #TODO EVAL SENTENCE SCORE
+        #a. DL model
+        #b. Dict
+        #c. GENSIM SIMILITY
+        #score = a*x + b*y + c*z ,x=0.3,y=0.4,z=0.3
+        #分值越大越差
         
-        dl_score = math.log(dl_score) if dl_score>0 else 0
-        score = dl_score +  dict_score
-            
+        dl_score = self.score_sentence(phase.phase_string())
+        print("dl score:",dl_score)
+#        dl_score = math.log(dl_score) if dl_score>0 else 0
+        dl_score = dl_score/1000
+        print("log dl score:",dl_score)
+        avg_length = sum([len(s.sentence) for s in phase.sentence_list])/len(phase.sentence_list)
+        #平均字数在10字左右的句子质量较高
+        distance = abs(avg_length-10)
+        
+        score = dl_score +  distance
         return score
 
 if __name__ == '__main__':
