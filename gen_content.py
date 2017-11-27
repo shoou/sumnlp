@@ -15,7 +15,10 @@ import time
 import util_tool as util
 import jieba
 import collections
+import gensim
 from gensim import corpora, models
+from gensim.models import Word2Vec
+
 import jieba.posseg as pseg
 #from snownlp import SnowNLP
 from sentence_checker import SentenceChecker
@@ -97,6 +100,7 @@ class Short_Sentence:
         self.sentence = sentence_init
         self.score = score_init
         self._group_score = 0
+        self.user_cut = False
     
     def __str__(self):
         return self.sentence
@@ -136,7 +140,7 @@ class Phase:
         self._composite_score = value
     
     def __repr__(self):
-        return "gid:"+str(self.groupid)+",score:"+str(self.avg_score)+ ", composite socre:"+str(self._composite_score) +" phase:"+self.phase_string()
+        return "gid:"+str(self.groupid)+",score:"+str(self.avg_score)+ ", composite socre:"+str(self.composite_score) +" phase:"+self.phase_string()
 
 class ContentCreater:
 
@@ -150,7 +154,8 @@ class ContentCreater:
         self.all_brands = db.read_distinct_brand()
         self.brandList = list(set(self.all_brands))
         self.checker.add_user_words(self.brandList)
-        
+        self.model = Word2Vec.load("../../wordvec/new_model/zhwiki")
+
 #        os.environ['CLASSPATH'] = '/Users/lully/Documents/MSE/JingDong/Code/Feature/HanLP-master/hanlp.jar'
 #
 #        DemoDependencyParser = autoclass('com.hankcs.demo.DemoDependencyParser')
@@ -163,7 +168,7 @@ class ContentCreater:
 #
 
         self.forbid_words = ['顾客','发票','售后','广告','旗舰店','以上数据','产品参数','仅供参考','理论值','保修','发货','无条件','质保','物流','下单','退货','三包规定','客服','实验室','本店','收货','店铺活动','经销商','免息','分期','订单','活动','好礼','赠送','购机','原装','包装清单','保修卡','说明书','VIP','专享','权益','抢购','购物须知','参数展示','参照官网','测试','赠品','免费获得','专属定制','安装步骤','仅适用']
-
+        self.sentence_filer_words =['不可抗力','为准','领券','购买']
 
     def get_stop_words_set(self,file_name):
         retList = []
@@ -591,21 +596,27 @@ class ContentCreater:
     #返回：图片编号和含标点的短句子构成的对象列表
     def split_short_sentences(self,raw_sentences):
         raw_ocr_short_sentences =[]
-        
+
         groupid = 1
         for s in raw_sentences:
             groupid += 1
             #如果是中文前后是空格，则将空格去掉。
             s = util.replace_punc(s," ","")
             s = util.replace_punc(s,"*",",")
-            
+            s = util.replace_punc(s,";","。")
+
             st_list = s.split(",")
             for st in st_list:
                 result_phase = ""
                 if len(raw_ocr_short_sentences)>0:
                     result_phase = raw_ocr_short_sentences[-1].sentence
-
-                if len(st)<4:
+                contains_wrong_words = False
+                for sfw in self.sentence_filer_words:
+                    if sfw in st:
+                        contains_wrong_words = True
+                        break
+                        
+                if len(st)<4 or contains_wrong_words:
                     last_char = ""
                     if len(result_phase)>0:#如果有前一句话，则将其句尾以句号结尾
                         last_char = result_phase[-1]
@@ -625,7 +636,9 @@ class ContentCreater:
                     last_char = ""
                     if len(result_phase)>0:
                         last_char = result_phase[-1]
-                
+                    ssst = re.sub("[\(\[].*?[\)\]]", "", ssst)
+                    
+    
                     if len(ssst)<4:#句子太短了，去之，此句两边的句子不连接，所以用句号连接
                         if last_char in [',','.','。','，']:
                             result_phase = result_phase[:-1]+"。"
@@ -643,12 +656,48 @@ class ContentCreater:
 
         return raw_ocr_short_sentences
     
+    def sim_sentence(self,sent1,sent2):
+        if len(sent1)<=0 or len(sent2)<=0:
+            return 0
+        
+        wordlist1 = jieba.analyse.extract_tags(sent1, withWeight=True)
+        wordlist2 = jieba.analyse.extract_tags(sent2, withWeight=True)
+#        print(wordlist1)
+#        print(wordlist2)
+
+        sims = []
+        for w1,x1 in wordlist1:
+            max_sim = 0
+            for w2,x2 in wordlist2:
+                if w1 in self.model.wv.vocab and w2 in self.model.wv.vocab:
+                    sim = self.model.similarity(w1,w2)
+                    if sim>max_sim:
+                        max_sim = sim
+            sims.append(max_sim)
+    
+        for w1,x1 in wordlist2:
+            max_sim = 0
+            for w2,x2 in wordlist1:
+                if w1 in self.model.wv.vocab and w2 in self.model.wv.vocab:
+                    sim =self.model.similarity(w1,w2)
+                    if sim>max_sim:
+                        max_sim = sim
+#                else:
+#                    print(w1,w2,"not in vocab 2")
+            sims.append(max_sim)
+        if len(sims)<=0:
+            return 0
+        
+        result_sim = sum(sims)/len(sims)
+        return result_sim
+
+    
     #返回候选短句子列表，以dict格式返回，key为groupid，value为list
     #首先调用chekcer打分（句子通顺和错别字等），分值越大越差
     #如果含有lda特征，则加分
     #如果含有数字／英文／特殊符号，则不同程度减分
     #短句打分之后形成短句池
-    #计算整个图片的缩合分值,采用max(sentence_score)+avg(sentence_score)综合的方式,另外可以计算整个段话中各子句之间的相似度，如果相似度较小，说明不是说的一件事情
+    #计算整个图片的缩合分值,采用min(sentence_score)+avg(sentence_score)综合的方式,计算整个段话中各子句之间的相似度，如果相似度较大，说明不是说的一件事情
     #按照group的分值顺序提取句子，并选择下1句,如果2句以内含有另一个高值短句，则作为下一句一起取得，并标记为已选，在下面选择时不要重复选这句了。
     #最后选择的句子合并成为文章
     def extract_phase(self,features,short_sentences):
@@ -658,19 +707,20 @@ class ContentCreater:
         for s in short_sentences[:]:
             s.score = self.checker.eval_sentence(s.sentence)
             print(s.sentence+":::::::::::",s.score)
-            if s.score <20:
+            if s.score <15:
                 filtered_sentences.append(s)
             else:
                 if len(filtered_sentences)>0:
-                    filtered_sentences[-1].sentence = filtered_sentences[-1].sentence[:-1]+"。"
+#                    filtered_sentences[-1].sentence = filtered_sentences[-1].sentence[:-1]+"。"
+                    filtered_sentences[-1].user_cut = True
 
         if len(filtered_sentences)<=0:
             return None
-        
+        #如果句子中含有主题词，鼓励
         for feature in features:
             matching_list_obj = [s for s in filtered_sentences if feature in s.sentence]
             for matching_sentence_obj in matching_list_obj:
-                matching_sentence_obj.score  = matching_sentence_obj.score / 2
+                matching_sentence_obj.score  = matching_sentence_obj.score * 0.8
                 print(matching_sentence_obj.sentence+":::::::::: s score:",matching_sentence_obj.score)
 
         #begin construct group list
@@ -687,8 +737,6 @@ class ContentCreater:
                     group_list[last_groupid] = []
 
         #end construct group list
-    
-
         phase_list = []
         print("compute group's score:")
         for k,short_sentences_list in group_list.items():
@@ -711,115 +759,106 @@ class ContentCreater:
                     
                     phase_list.append(ph)
                     tmp_ph_list = []
-                    
+
+        for feature in features:
+            matching_list_obj = [s for s in  phase_list if feature in s.phase_string()]
+            for matching_sentence_obj in matching_list_obj:
+                matching_sentence_obj.composite_score  = matching_sentence_obj.composite_score * 0.6
+                print(matching_sentence_obj.phase_string()+":::::::::: phase score:",matching_sentence_obj.composite_score)
+
             
         #按照图片的分值重新排序（由低到高）
         score_sorted_group = sorted(group_list.items(), key=lambda kv: kv[1][0].group_score)
         for key, value in score_sorted_group:
-            print ("%s:%s, %s" % (key,value, value[0].group_score))
+            print ("score_sorted_group : %s:%s, %s" % (key,value, value[0].group_score))
 
         #将每个图片中的句子以句号分隔，并构建Phase对象（含多个短句），并计算phase的平均分值，最后选择平均分最低的phase构建文章
         sorted_phase_list = sorted(phase_list,key=lambda ph:ph.composite_score)
         for sph in sorted_phase_list:
-            print(sph)
+            print("sorted_phase_list:%s"%(sph))
+
+
 
         print("$$$$$$"*3)
-        result_sentences_list = []
-        for feature in features[:]:
-            for s in sorted_phase_list:
-                phase_string =  s.phase_string()
-                if feature in phase_string and phase_string not in result_sentences_list:
-                    result_sentences_list.append(phase_string)
-                    #同一句子中含有多个关键词
-                    for f in features:
-                        if f in phase_string:
-                            features.remove(f)
-                    break
-
-        print(result_sentences_list)
-
-        #重新计算句子的lda主题
-        words = self.lda_features(result_sentences_list,2,3)
-        result_words = []
-        for w in words:
-            if w not in result_words:
-                result_words.append(w)
-
-        new_result = []
-        for feature in result_words[:]:
-            for s in result_sentences_list:
-                phase_string =  s
-                if feature in phase_string and phase_string not in new_result:
-                    new_result.append(phase_string)
-                    #同一句子中含有多个关键词
-                    for f in result_words:
-                        if f in phase_string:
-                            result_words.remove(f)
-                            break
-
-        print("$$$$$$$$$$$$$$$$$$$$$")
-        print(new_result)
-        #phase分词后计算各分句的相似度
-        
-        article = ""
-        for ss in new_result:
-            article += ss
-            if len(article)>90:
-                break
-
-        util.writeList2File("new_article.txt",[article],'a')
-
-        return result_sentences_list
+#        result_sentences_list = []
+#        for feature in features[:]:
+#            for s in sorted_phase_list:
+#                phase_string =  s.phase_string()
+#                if feature in phase_string and phase_string not in result_sentences_list:
+#                    result_sentences_list.append(phase_string)
+#                    #同一句子中含有多个关键词
+#                    for f in features:
+#                        if f in phase_string:
+#                            features.remove(f)
+#                    break
 #
-#        result_sentences = {}
+#        print(result_sentences_list)
+#        #重新计算句子的lda主题
+#        words = self.lda_features(result_sentences_list,2,3)
+#        result_words = []
+#        for w in words:
+#            if w not in result_words:
+#                result_words.append(w)
 #
-#        for feature in features:
-#            candidate_sents =[]
-#            matching_list_obj = [s for s in short_sentences if feature in s.sentence]
-#            got_next = False
-#            for matching_sentence_obj in matching_list_obj:
-#                if got_next:
-#                    got_next = False
-#                    continue
-#                matching_sentence = matching_sentence_obj.sentence
-#                if self.checker.check_sentence(matching_sentence)== False:
-#                    continue
-#                if self.check_sent_one_feature(matching_sentence,features):
-#                    result_sentence_kv = ""
-#                    if matching_sentence not in candidate_sents:
-#                        result_sentence_kv = matching_sentence
-#                    #筛选下一句话
-#                    next_sentence_index = short_sentences.index(matching_sentence_obj)+1
-#                    if next_sentence_index < len(short_sentences) and matching_sentence[-1] != "。":
-#                        next_sent_obj = short_sentences[next_sentence_index]
-#                        #下一句话只存在于同一个图片中
-#                        if next_sent_obj.groupid == matching_sentence_obj.groupid:
-#                            next_sent = next_sent_obj.sentence
-#                            #下一句中名词占比低于某一值，说明其
-#                            words = pseg.cut(next_sent)
-#                            noun_count =0
-#                            eng_count = 0
-#                            total_count =0
-#                            for c,v in words:
-#                                total_count+=1
-#                                if v =="n" or v == "vn":
-#                                    noun_count+=1
-#                                if v == "eng":# or v=="m":
-#                                    eng_count +=1
-#                            noun_percent = noun_count*100/total_count
-#                            eng_percent = eng_count*100/total_count
-#                            print("======"+matching_sentence+"============"+next_sent+"====",noun_percent,eng_percent)
+#        new_result = []
+#        for feature in result_words[:]:
+#            for s in result_sentences_list:
+#                phase_string =  s
+#                if feature in phase_string and phase_string not in new_result:
+#                    new_result.append(phase_string)
+#                    #同一句子中含有多个关键词
+#                    for f in result_words:
+#                        if f in phase_string:
+#                            result_words.remove(f)
+#                            break
 #
-#                            if noun_percent<=50 and eng_percent<50 and self.checker.check_sentence(next_sent) and self.check_sent_one_feature(next_sent,features)==False and next_sent not in candidate_sents:
-#                                result_sentence_kv +=next_sent
-#                                got_next = True
-#                    result_kv_obj = Short_Sentence(matching_sentence_obj.groupid,result_sentence_kv)
-#
-#                    candidate_sents.append(result_kv_obj)
-#        if len(candidate_sents)>0:
-#            result_sentences[feature] = candidate_sents
-#
-#        return result_sentences
+#        print("$$$$$$$$$$$$$$$$$$$$$")
+#        print(new_result)
+
+
+
+        #begin phase分词后计算各分句的相似度，移除相似度超过0.5的高分值句子
+        new_phase_list = []
+        need_remove_phases = {}
+        for idx,rs in enumerate(sorted_phase_list[:]):
+            max_sim = 0
+            max_sim_sentence = ""
+            for idx2,rs2 in enumerate(sorted_phase_list[:]):
+                if rs == rs2 or idx2 <= idx:
+                    continue
+                
+                sim = self.sim_sentence(rs.phase_string(),rs2.phase_string())
+
+                if sim > 0.4:
+                    print(max_sim,rs,"|||",rs2)
+                    if idx not in need_remove_phases:
+                        need_remove_phases[idx] =[]
+                    if rs not in need_remove_phases[idx]:
+                        need_remove_phases[idx].append(rs)
+                    if rs2 not in need_remove_phases[idx]:
+                        need_remove_phases[idx].append(rs2)
+                else:
+                    new_phase_list.append(rs)
+
+        real_remove_phases = []
+        for k,need_remove_list in need_remove_phases.items():
+            min_score = need_remove_list[0].composite_score
+            remain_ph = None
+            for ph in need_remove_list[:]:
+                if ph.composite_score > min_score:
+                    if ph not in real_remove_phases:
+                        real_remove_phases.append(ph)
+                else:
+                    min_score = ph.composite_score
+        #end
+
+        print("去除相似phase后:")
+        sorted_phase_list = [sp for sp in sorted_phase_list if sp not in real_remove_phases]
+        print(sorted_phase_list)
+
+        return [s.phase_string() for s in sorted_phase_list]
+#        return result_sentences_list
+
 
     
     #生成摘要内容
@@ -883,6 +922,17 @@ class ContentCreater:
         
         phase_list = self.extract_phase(final_features,raw_ocr_short_sentences)
         
+        #begin test
+        article = ""
+        for ss in phase_list:
+            article += ss
+            if len(article)>80:
+                break
+        
+        util.writeList2File("new_article.txt",[str(skuid) + ": " + ''.join(phase_list)],'a')
+        #end test
+
+        return article
         
         #取ocr中句子
         feature_sentences_dict = self.extract_sentences_with_feature(final_features,raw_ocr_short_sentences)
@@ -922,6 +972,5 @@ class ContentCreater:
                  
         result_article = result_article[:-1]+"."
         return result_article
-        
 
 

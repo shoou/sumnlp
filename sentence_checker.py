@@ -11,6 +11,7 @@ import re
 import mysql_reader as db
 from aip import AipNlp
 import math
+from stanfordcorenlp import StanfordCoreNLP
 
 """ 你的 APPID AK SK """
 APP_ID = '10354266'
@@ -29,6 +30,7 @@ class SentenceChecker:
         print("loading word2vec model...")
         self.model = Word2Vec.load(model_path)
         self.aipNlp = AipNlp(APP_ID, API_KEY, SECRET_KEY)
+        self.nlp = StanfordCoreNLP(r'../stanford-corenlp-full-2017-06-09/', lang='zh')
 
 
     def add_user_words(self,words_list):
@@ -59,7 +61,9 @@ class SentenceChecker:
             return 100000000
         
         result = self.aipNlp.dnnlm(sentence)
-        ppl = result['ppl']
+        ppl = 10000
+        if 'ppl' in result:
+            ppl = result['ppl']
         return ppl
         
     def is_good_phase(self,sentence):
@@ -129,8 +133,9 @@ class SentenceChecker:
                 words.append(ch+line[i+1])
                 skip_next = True
         #如果有*等特殊符号，则认为存在识别错误，对本句进行惩罚
-        if "*" in line:
-            wrong_words_count = 50
+        for sp in ["*",":",")","(","/"]:
+            if sp in line:
+                wrong_words_count = 50
 
         total_count =0
         count = 0
@@ -148,7 +153,7 @@ class SentenceChecker:
             total_count +=1
                 
         if total_count>0:
-            result_socre = (count*10)*100/total_count + wrong_words_count
+            result_socre = (count)*100/total_count + wrong_words_count
             return result_socre
         else:
             return 100
@@ -161,15 +166,18 @@ class SentenceChecker:
         #c. GENSIM SIMILITY
         #score = a*x + b*y + c*z ,x=0.3,y=0.4,z=0.3
         #分值越大越差
+        print("sentence",sentence)
         dl_score = self.score_sentence(sentence)
         print("dl score:",dl_score)
 #        dl_score = math.log(dl_score) if dl_score>0 else 0
-        dl_score = (dl_score/1000)**2
+        dl_score = (dl_score/600)
 
         print("log dl score:",dl_score)
 
         dict_score = self.score_sentence_dict(sentence)
         print("dict score:",dict_score)
+
+
 
         score = dl_score + dict_score
         return score
@@ -181,17 +189,58 @@ class SentenceChecker:
         #c. GENSIM SIMILITY
         #score = a*x + b*y + c*z ,x=0.3,y=0.4,z=0.3
         #分值越大越差
-        
+        good_sentence_length = 10
+        print("phase",phase.phase_string())
         dl_score = self.score_sentence(phase.phase_string())
         print("dl score:",dl_score)
-#        dl_score = math.log(dl_score) if dl_score>0 else 0
-        dl_score = dl_score/1000
+#        dl_score = math.log(dl_score)*5 if dl_score>0 else 0
+        dl_score = (dl_score/600)
         print("log dl score:",dl_score)
         avg_length = sum([len(s.sentence) for s in phase.sentence_list])/len(phase.sentence_list)
         #平均字数在10字左右的句子质量较高
-        distance = abs(avg_length-10)
+        sub_words_count = abs(avg_length - good_sentence_length)
+        print(sub_words_count)
+        if sub_words_count ==0:
+            distance = 0
+        else:
+#            distance = math.log(sub_words_count)*5
+            distance = (sub_words_count)*5
+
+        #子句数量太多，惩罚
+        if len(phase.sentence_list)>2:
+            distance += (len(phase.sentence_list)-2)*2
+        np_percent_score = 0
         
-        score = dl_score +  distance
+        #只有一个子句，且子句过短，惩罚
+        if len(phase.sentence_list)==1:
+            mm = abs(20 - len(phase.sentence_list[0].sentence))
+            distance += (mm*5)
+        
+            #判断句子中没有谓语
+            parser_result = self.nlp.parse(phase.phase_string())
+            if "VP" not in parser_result and "NP" in parser_result:
+                distance +=50
+        else:
+            #处理多个小短句中NP很多的情况，惩罚罗列NP
+            np_count = 0
+            for s in phase.sentence_list:
+                print(s)
+                sentence_result = self.nlp.parse(s.sentence)
+                if "VP" not in sentence_result and "NP" in sentence_result:
+                    np_count += 1
+            np_percent = 10*np_count/len(phase.sentence_list)
+            print("惩罚罗列NP",np_percent)
+            np_percent_score = np_percent
+        
+        #征罚人为断句
+        user_cut_score = 0
+        user_cut_count = 0
+        for s in phase.sentence_list:
+            if s.user_cut:
+                user_cut_count+=1
+        user_cut_score = 10*user_cut_count/len(phase.sentence_list)
+        
+        score = dl_score +  distance + np_percent_score + user_cut_score
         return score
 
 if __name__ == '__main__':
