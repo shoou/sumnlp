@@ -168,7 +168,7 @@ class ContentCreater:
 #
 
         self.forbid_words = ['顾客','发票','售后','广告','旗舰店','以上数据','产品参数','仅供参考','理论值','保修','发货','无条件','质保','物流','下单','退货','三包规定','客服','实验室','本店','收货','店铺活动','经销商','免息','分期','订单','活动','好礼','赠送','购机','原装','包装清单','保修卡','说明书','VIP','专享','权益','抢购','购物须知','参数展示','参照官网','测试','赠品','免费获得','专属定制','安装步骤','仅适用']
-        self.sentence_filer_words =['不可抗力','为准','领券','购买']
+        self.sentence_filer_words =['不可抗力','为准','领券','购买','均为','均指','不支持','礼品']
 
     def get_stop_words_set(self,file_name):
         retList = []
@@ -202,30 +202,6 @@ class ContentCreater:
         return word_list
 
 
-    def check_sent_one_feature(self,sentence,features):
-    #    new_sentence_list = []
-    #    for s in ocr_sentence:
-    #        new_sentence = ""
-    #        lines = re.split(',',s)
-    #        for line in lines:
-    #            if checker.check_sentence(line):
-    #                new_sentence += (line +",")
-    #        new_sentence_list.append(new_sentence)
-
-    #    if checker.check_sentence(sentence) == False:
-    #        return False
-
-        contains_feature_count = 0
-        for f in features:
-            if f in sentence:
-                contains_feature_count +=1
-        if contains_feature_count==1:
-            #print("sentence:"+sentence+" features:"+str(features))
-            return True
-
-        return False
-
-
     def remove_conn(self,sentence):
         if sentence == None or len(sentence)<1:
             return sentence
@@ -235,79 +211,6 @@ class ContentCreater:
                 sentence = sentence.replace(cnn,"")
 
         return sentence
-
-    def choose_sentence(self,sentence_list,sku_brands, brandList,sku_pty_list,all_pyt_list,typename,features):
-        sentences_stop_words = ["*","//","购买","我们","]",">","但","理论值","?"]
-        #当前sku的属性值要从分类的所有属性值中去除，只要商品特征含有非本商品的其它属性值，则弃之
-        if len(sentence_list) <1:
-            return ""
-#        if len(sentence_list) == 1:
-#            return sentence_list[0]
-
-        for i in sku_brands:
-            if i in brandList:
-                brandList.remove(i)
-
-        for b in brandList:
-            if len(b)<=1:
-                brandList.remove(b)
-
-        for f in features:
-            if f in all_pyt_list:
-                all_pyt_list.remove(f)
-
-
-        for p in sku_pty_list:
-            if p in all_pyt_list:
-                all_pyt_list.remove(p)
-        if typename in all_pyt_list:
-            all_pyt_list.remove(typename)
-        for st in self.stop_words_set:
-            if st in all_pyt_list:
-                all_pyt_list.remove(st)
-
-        result_sent = None
-        result_sentence_list =[]
-        for sentence_obj in sentence_list:
-            x = sentence_obj.sentence
-            go_next = False
-
-            if in_debug: print("*"*10+x)
-            for pty in all_pyt_list:
-                if pty in x:
-                    go_next = True
-                    if in_debug: print("pty:" + pty + "     :"+ x)
-                    break
-            for brand in brandList:
-                if brand in x:
-                    go_next = True
-                    if in_debug: print("brand:"+brand+ "  :"+x)
-                    break
-            for sw in sentences_stop_words:
-                if sw in x:
-                    go_next = True
-                    if in_debug:print("stop words:"+sw+": "+x)
-                    break
-            #TODO 调用语义依存分析， 如果句子中只有施事者，不含有受事者，则说明是半句话，过滤之
-            
-            if go_next == False:
-                result_sent = x
-                result_sentence_list.append(x)
-                if in_debug: print("found proper sentence:"+x)
-    
-        if in_debug: print("got sentences count:",len(result_sentence_list))
-        score = 0
-        if len(result_sentence_list)>0:
-            for s in result_sentence_list:
-                print("---filter sentence:",s)
-                sc = self.score_stence(s)
-                if len(s)<len(result_sent) and len(self.remove_punc(s))>6 and len(s)<32:
-                    print(sc,self.score_stence(result_sent))
-                    if sc > self.score_stence(result_sent):
-                        result_sent = s
-                        print("---get new proper sentence:",s)
-
-        return self.remove_conn(result_sent)
 
 
     def score_stence(self,sentence):
@@ -507,64 +410,6 @@ class ContentCreater:
 
         return result_features
 
-    
-    
-    #返回每个feature对应的候选句子列表，以dict格式返回，key为feature，value为list
-    def extract_sentences_with_feature(self,features,short_sentences):
-#        print("extract_sentences_with_feature",features)
-        print("short_sentences:",[ s.sentence for s in short_sentences])
-
-        result_sentences = {}
-        
-        for feature in features:
-            candidate_sents =[]
-            matching_list_obj = [s for s in short_sentences if feature in s.sentence]
-            #TODO cut attributes not need.
-            got_next = False
-            for matching_sentence_obj in matching_list_obj:
-                if got_next:
-                    got_next = False
-                    continue
-                matching_sentence = matching_sentence_obj.sentence
-                if self.checker.check_sentence(matching_sentence)== False:
-#                if self.checker.is_correct_sentence(matching_sentence) == False:
-                    continue
-                if self.check_sent_one_feature(matching_sentence,features):
-                    result_sentence_kv = ""
-                    if matching_sentence not in candidate_sents:
-                        result_sentence_kv = matching_sentence
-                    #筛选下一句话
-                    next_sentence_index = short_sentences.index(matching_sentence_obj)+1
-                    if next_sentence_index < len(short_sentences) and matching_sentence[-1] != "。":
-                        next_sent_obj = short_sentences[next_sentence_index]
-                        #下一句话只存在于同一个图片中
-                        if next_sent_obj.groupid == matching_sentence_obj.groupid:
-                            next_sent = next_sent_obj.sentence
-                            #下一句中名词占比低于某一值，说明其
-                            words = pseg.cut(next_sent)
-                            noun_count =0
-                            eng_count = 0
-                            total_count =0
-                            for c,v in words:
-                                total_count+=1
-                                if v =="n" or v == "vn":
-                                    noun_count+=1
-                                if v == "eng":# or v=="m":
-                                    eng_count +=1
-                            noun_percent = noun_count*100/total_count
-                            eng_percent = eng_count*100/total_count
-                            print("======"+matching_sentence+"============"+next_sent+"====",noun_percent,eng_percent)
-                            
-                            if noun_percent<=50 and eng_percent<50 and self.checker.check_sentence(next_sent) and self.check_sent_one_feature(next_sent,features)==False and next_sent not in candidate_sents:
-                                result_sentence_kv +=next_sent
-                                got_next = True
-                    result_kv_obj = Short_Sentence(matching_sentence_obj.groupid,result_sentence_kv)
-                    
-                    candidate_sents.append(result_kv_obj)
-            if len(candidate_sents)>0:
-                result_sentences[feature] = candidate_sents
-                    
-        return result_sentences
 
     def replace_words(self,comment_features,ocr_cut_words):
         for cf,index in enumerate(comment_features):
@@ -602,7 +447,7 @@ class ContentCreater:
             groupid += 1
             #如果是中文前后是空格，则将空格去掉。
             s = util.replace_punc(s," ","")
-            s = util.replace_punc(s,"*",",")
+            s = util.replace_punc(s,"*","")
             s = util.replace_punc(s,";","。")
 
             st_list = s.split(",")
@@ -632,6 +477,7 @@ class ContentCreater:
                 st = util.replace_punc(st,"!","。")
 #                st = util.replace_punc(st,":","：")
                 sst = re.split('[。!]',st)
+                print(st)
                 for ssst in sst:
                     last_char = ""
                     if len(result_phase)>0:
@@ -645,13 +491,12 @@ class ContentCreater:
                             raw_ocr_short_sentences[-1].sentence= result_phase
                         continue
                     else:
-                        if len(sst)>1:
+                        if len(sst)>1 and ssst != sst[-1]:
                             result_phase = ssst+"。"
                         else:
                             result_phase = ssst+"，"
-#                    raw_ocr_short_sentences.append(self.remove_punc(ssst))
                     short_sentence_obj = Short_Sentence(groupid,result_phase)
-#                    print("-"*44,groupid, result_phase)
+                    print("-"*44,groupid, result_phase)
                     raw_ocr_short_sentences.append(short_sentence_obj)
 
         return raw_ocr_short_sentences
@@ -704,15 +549,22 @@ class ContentCreater:
 #        print("short_sentences:",[ s.sentence for s in short_sentences])
 
         filtered_sentences = []
+        last_user_cut = False
         for s in short_sentences[:]:
             s.score = self.checker.eval_sentence(s.sentence)
             print(s.sentence+":::::::::::",s.score)
+            
+            if last_user_cut:#之前有人为断过句子，可能会导致不通顺，需要进行标记
+                s.user_cut = True
+                last_user_cut = False
             if s.score <15:
+                
                 filtered_sentences.append(s)
             else:
                 if len(filtered_sentences)>0:
 #                    filtered_sentences[-1].sentence = filtered_sentences[-1].sentence[:-1]+"。"
                     filtered_sentences[-1].user_cut = True
+                    last_user_cut = True
 
         if len(filtered_sentences)<=0:
             return None
@@ -735,8 +587,9 @@ class ContentCreater:
                 if (idx+1) < len(filtered_sentences):
                     last_groupid = filtered_sentences[idx+1].groupid
                     group_list[last_groupid] = []
-
         #end construct group list
+        
+        
         phase_list = []
         print("compute group's score:")
         for k,short_sentences_list in group_list.items():
@@ -767,10 +620,10 @@ class ContentCreater:
                 print(matching_sentence_obj.phase_string()+":::::::::: phase score:",matching_sentence_obj.composite_score)
 
             
-        #按照图片的分值重新排序（由低到高）
-        score_sorted_group = sorted(group_list.items(), key=lambda kv: kv[1][0].group_score)
-        for key, value in score_sorted_group:
-            print ("score_sorted_group : %s:%s, %s" % (key,value, value[0].group_score))
+#        #按照图片的分值重新排序（由低到高）这个暂时不使用了
+#        score_sorted_group = sorted(group_list.items(), key=lambda kv: kv[1][0].group_score)
+#        for key, value in score_sorted_group:
+#            print ("score_sorted_group : %s:%s, %s" % (key,value, value[0].group_score))
 
         #将每个图片中的句子以句号分隔，并构建Phase对象（含多个短句），并计算phase的平均分值，最后选择平均分最低的phase构建文章
         sorted_phase_list = sorted(phase_list,key=lambda ph:ph.composite_score)
@@ -829,7 +682,7 @@ class ContentCreater:
                 
                 sim = self.sim_sentence(rs.phase_string(),rs2.phase_string())
 
-                if sim > 0.4:
+                if sim > 0.5:
                     print(max_sim,rs,"|||",rs2)
                     if idx not in need_remove_phases:
                         need_remove_phases[idx] =[]
@@ -921,56 +774,20 @@ class ContentCreater:
         final_features = self.combine_ocr_comment_features(type_features,title_features, ocr_features,comment_features)
         
         phase_list = self.extract_phase(final_features,raw_ocr_short_sentences)
+        print(phase_list)
         
         #begin test
         article = ""
         for ss in phase_list:
+            if len(article)+len(ss)>90:
+                break
             article += ss
-            if len(article)>80:
+            if len(article)>60:
                 break
         
         util.writeList2File("new_article.txt",[str(skuid) + ": " + ''.join(phase_list)],'a')
         #end test
 
         return article
-        
-        #取ocr中句子
-        feature_sentences_dict = self.extract_sentences_with_feature(final_features,raw_ocr_short_sentences)
-        
-        print("feature_sentences_dict:")
-        for k,v in feature_sentences_dict.items():
-            print(k,v)
-        
-        #特征词进行相似性聚类
-        cluster_features = self.cluster_feature(feature_sentences_dict.keys(),5)
-        #按照主题概率进行组内排序
-        cluster_features = self.sort_cluser_with_priority(cluster_features,final_features)
-        
-        sku_pty_list = db.read_sku_pty(skuid)
-        if typeid == "9435":
-            choosed_pty_list = ['香型','品牌', '规格','包装','省份','产地','酿造工艺','等级','净含量']
-        if typeid == "655":
-            choosed_pty_list = ['CPU型号','CPU品牌','型号','品牌','热点','常用功能','后置摄像头','操作系统','屏幕材质类型']
-         
-        all_pyt_list = db.read_pry_typeid(skuid,typeid,choosed_pty_list)
-        sku_brands = db.read_distinct_brand(skuid)
-        sku_brands = list(set(sku_brands))
-        all_brands = db.read_distinct_brand(typeid)
-        brandList = list(set(all_brands))
-         
-        result_article = ""
-        for cf in cluster_features:
-            sentences_obj = feature_sentences_dict[cf]
-            choosed_sentence = self.choose_sentence(sentences_obj,sku_brands,brandList,sku_pty_list,all_pyt_list,typename,cluster_features)
-            if choosed_sentence != None:
-                new_sentence =util.replace_punc(choosed_sentence,".",",")
-                new_sentence =util.replace_punc(new_sentence,"。",",")
-                
-                result_article += new_sentence
-            if len(result_article)>80:
-                break
-                 
-        result_article = result_article[:-1]+"."
-        return result_article
 
 

@@ -301,10 +301,13 @@ class TitleCreater:
             if tmp_type_name in feature_string:
                 tmp_type_name = ""
 
+            machine_title = title
+
             if len(title)<8:
                 print("\n"+"="*16 + "机器标题:"+title)
             else:
-                print("\n"+"="*16 + "机器标题:"+brand_model + feature_string + tmp_type_name)
+                machine_title = brand_model + feature_string + tmp_type_name
+                print("\n"+"="*16 + "机器标题:"+ machine_title)
             print("="*16 + "达人标题:"+recommend_title+"\n")
 
             content_features = self.cut_words_feature(new_title,['n','nr'])
@@ -319,10 +322,11 @@ class TitleCreater:
             print("达人文章:"+recommend_reason)
             print("机器内容:"+mchine_content)
             if len(mchine_content)>50:
-                result_list.append("skuid:"+str(skuid)+"\n达人文章:"+recommend_reason+"\n机器内容:"+mchine_content+"\n")
+#                result_list.append("skuid:"+str(skuid)+"\n达人文章:"+recommend_reason+"\n机器内容:"+mchine_content+"\n")
+                result_list.append("skuid:"+str(skuid)+"\n"+machine_title+"\n"+mchine_content+"\n\n")
 
-        util.writeList2File(type_id+".txt",result_list)
-
+            util.writeList2File(type_id+".txt",result_list,'a')
+            del result_list[:]
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
